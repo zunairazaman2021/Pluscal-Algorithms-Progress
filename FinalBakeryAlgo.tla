@@ -1,6 +1,6 @@
 -------------------------- MODULE FinalBakeryAlgo --------------------------
 EXTENDS TLC, Naturals, Integers, Sequences
-CONSTANT P, maxticket
+CONSTANT P, maxticket, maxlength
 ASSUME P \in Nat
 Processes == 1..P
 a \prec b == \/ a[1] < b[1]
@@ -28,7 +28,9 @@ fair process (bakery \in Processes)
     \*Main Thread
     variables  procs0 =Processes \ {self},procs1 =Processes \ {self},procs =Processes \ {self}, procs3 =Processes \ {self}, msg, sndr;
    {L1: while (TRUE){
-    IS:  await pc[self][2] = "XL";
+
+    IS: await pc[self][2] = "XL" /\ pc[self][4] = "PreL2" /\ pc[self][5] = "PreL3" ;
+
     M:   await procs0={};
         numbers[self] := 1 + max([j \in Processes \{self} |-> localNum[self, j]]);
         multicast(network, [self, i \in Processes |-> Request(numbers[self])]);
@@ -45,7 +47,7 @@ fair process (bakery \in Processes)
       XL: while(TRUE){
         await  pc[self][1] = "M";
        XL1:  while (procs0 # {}){
-           with (j \in Processes){
+           with (j \in procs0){
              localCh[j, self] := TRUE;
              procs0 := procs0 \ {j};
           };
@@ -57,8 +59,9 @@ fair process (bakery \in Processes)
       PL0: while (TRUE){
             await pc[self][1] = "wait";
       L0: while(procs1 # {}){
-                  with (j \in procs){
+                  with (j \in procs1){
                        await ackRcvd[self, j] = TRUE;
+                             localCh[j, self] := FALSE;
                        procs1 := procs1 \ {j};
                   };
       };
@@ -72,7 +75,6 @@ fair process (bakery \in Processes)
                await  pc[self][1] = "wait";
         L2:      while (procs # {}){
                   with (j \in procs \ procs1){
-                        localCh[j, self] := FALSE;
                         await localCh[self,j] = FALSE;
                         procs := procs \ {j};
                        }; \*end with
@@ -128,7 +130,7 @@ fair process (bakery \in Processes)
 
 
 
-\* BEGIN TRANSLATION - the hash of the PCal code: PCal-8737ef87240f27c4547bc77a3facefc8
+\* BEGIN TRANSLATION - the hash of the PCal code: PCal-e5f2a5fdb21889306eb101e492ae82bc
 CONSTANT defaultInitValue
 VARIABLES numbers, localNum, localCh, ackRcvd, network, pc
 
@@ -171,7 +173,7 @@ L1(self) == /\ pc[self][1]  = "L1"
                             procs0, procs1, procs, procs3, msg, sndr >>
 
 IS(self) == /\ pc[self][1]  = "IS"
-            /\ pc[self][2] = "XL"
+            /\ pc[self][2] = "XL" /\ pc[self][4] = "PreL2" /\ pc[self][5] = "PreL3"
             /\ pc' = [pc EXCEPT ![self][1] = "M"]
             /\ UNCHANGED << numbers, localNum, localCh, ackRcvd, network, 
                             procs0, procs1, procs, procs3, msg, sndr >>
@@ -217,7 +219,7 @@ XL(self) == /\ pc[self][2]  = "XL"
 
 XL1(self) == /\ pc[self][2]  = "XL1"
              /\ IF procs0[self] # {}
-                   THEN /\ \E j \in Processes:
+                   THEN /\ \E j \in procs0[self]:
                              /\ localCh' = [localCh EXCEPT ![j, self] = TRUE]
                              /\ procs0' = [procs0 EXCEPT ![self] = procs0[self] \ {j}]
                         /\ pc' = [pc EXCEPT ![self][2] = "XL1"]
@@ -240,14 +242,15 @@ PL0(self) == /\ pc[self][3]  = "PL0"
 
 L0(self) == /\ pc[self][3]  = "L0"
             /\ IF procs1[self] # {}
-                  THEN /\ \E j \in procs[self]:
+                  THEN /\ \E j \in procs1[self]:
                             /\ ackRcvd[self, j] = TRUE
+                            /\ localCh' = [localCh EXCEPT ![j, self] = FALSE]
                             /\ procs1' = [procs1 EXCEPT ![self] = procs1[self] \ {j}]
                        /\ pc' = [pc EXCEPT ![self][3] = "L0"]
                   ELSE /\ pc' = [pc EXCEPT ![self][3] = "PostL0"]
-                       /\ UNCHANGED procs1
-            /\ UNCHANGED << numbers, localNum, localCh, ackRcvd, network, 
-                            procs0, procs, procs3, msg, sndr >>
+                       /\ UNCHANGED << localCh, procs1 >>
+            /\ UNCHANGED << numbers, localNum, ackRcvd, network, procs0, procs, 
+                            procs3, msg, sndr >>
 
 PostL0(self) == /\ pc[self][3]  = "PostL0"
                 /\ pc[self][1] # "wait"
@@ -265,14 +268,13 @@ PreL2(self) == /\ pc[self][4]  = "PreL2"
 L2(self) == /\ pc[self][4]  = "L2"
             /\ IF procs[self] # {}
                   THEN /\ \E j \in procs[self] \ procs1[self]:
-                            /\ localCh' = [localCh EXCEPT ![j, self] = FALSE]
-                            /\ localCh'[self,j] = FALSE
+                            /\ localCh[self,j] = FALSE
                             /\ procs' = [procs EXCEPT ![self] = procs[self] \ {j}]
                        /\ pc' = [pc EXCEPT ![self][4] = "L2"]
                   ELSE /\ pc' = [pc EXCEPT ![self][4] = "POSTL2"]
-                       /\ UNCHANGED << localCh, procs >>
-            /\ UNCHANGED << numbers, localNum, ackRcvd, network, procs0, 
-                            procs1, procs3, msg, sndr >>
+                       /\ procs' = procs
+            /\ UNCHANGED << numbers, localNum, localCh, ackRcvd, network, 
+                            procs0, procs1, procs3, msg, sndr >>
 
 POSTL2(self) == /\ pc[self][4]  = "POSTL2"
                 /\ pc[self][1] # "wait"
@@ -351,12 +353,15 @@ Spec == /\ Init /\ [][Next]_vars
 
 Termination == <>(\A self \in ProcSet: \A sub \in SubProcSet[self] : pc[self][sub] = "Done")
 
-\* END TRANSLATION - the hash of the generated TLA code (remove to silence divergence warnings): TLA-75cdb02254082805032e2806b70b87f6
-StateConstraint == \A i \in Processes : numbers[i] <= maxticket
+\* END TRANSLATION - the hash of the generated TLA code (remove to silence divergence warnings): TLA-82958fdf515ad49cfabd0e33c914c616
+StateConstraint == 
+  /\ \A i \in Processes : numbers[i] <= maxticket 
+  /\ \A i, j \in Processes: Len(network[i,j]) <= maxlength
+
 MutualExclusion == \A i, j \in Processes : pc[i][1] = "CS" /\ pc[j][1] = "CS"  => i=j
 StarvationFree == \A proc \in Processes : (pc[proc][1] = "wait") ~> (pc[proc][1] = "CS")
 
 =============================================================================
 \* Modification History
-\* Last modified Fri Apr 08 17:01:29 GMT 2022 by zunai
+\* Last modified Wed Apr 13 15:13:53 GMT 2022 by zunai
 \* Created Sun Mar 27 13:39:18 GMT 2022 by zunai
